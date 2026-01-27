@@ -1,0 +1,3 @@
+[workspace]
+members = ["dsp-core", "plugin", "xtask"]
+resolver = "2"
