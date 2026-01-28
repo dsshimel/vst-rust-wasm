@@ -1,2 +1,6 @@
 /target
 *.pdb
+_dev/**
+PLAN.md
+initial-conversation.txt
+/web/dist/

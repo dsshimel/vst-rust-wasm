@@ -1,0 +1,23 @@
+[package]
+name = "synth-web"
+version = "0.1.0"
+edition = "2021"
+
+[lib]
+crate-type = ["cdylib", "rlib"]
+
+[dependencies]
+synth-ui = { path = "../synth-ui" }
+dsp-core = { path = "../dsp-core" }
+eframe = { version = "0.31", default-features = false, features = ["glow", "web_screen_reader"] }
+wasm-bindgen = "0.2"
+wasm-bindgen-futures = "0.4"
+web-sys = { version = "0.3", features = [
+    "AudioContext", "AudioWorkletNode", "AudioWorklet",
+    "MessagePort", "MessageEvent", "BaseAudioContext",
+    "AudioDestinationNode", "AudioNode",
+    "Window", "Document", "Element", "HtmlCanvasElement",
+    "Response",
+] }
+js-sys = "0.3"
+log = "0.4"

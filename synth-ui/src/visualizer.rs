@@ -1,4 +1,4 @@
-use nih_plug_egui::egui;
+use egui;
 use rustfft::num_complex::Complex;
 use rustfft::{Fft, FftPlanner};
 use std::sync::Arc;

@@ -12,8 +12,8 @@ path = "src/main.rs"
 
 [dependencies]
 dsp-core = { path = "../dsp-core" }
+synth-ui = { path = "../synth-ui" }
 nih_plug = { git = "https://github.com/robbert-vdh/nih-plug.git", features = ["assert_process_allocs", "standalone"] }
 nih_plug_egui = { git = "https://github.com/robbert-vdh/nih-plug.git" }
-rustfft = "6"
 atomic_float = "1"
 cpal = { version = "0.15", features = ["asio"] }

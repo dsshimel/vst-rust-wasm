@@ -1,6 +1,4 @@
 mod editor;
-mod keyboard;
-mod visualizer;
 
 use dsp_core::params::OscillatorType;
 use dsp_core::Synth;
@@ -180,7 +178,7 @@ pub struct SimpleSynthParams {
 impl Default for SimpleSynthParams {
     fn default() -> Self {
         Self {
-            editor_state: nih_plug_egui::EguiState::from_size(800, 500),
+            editor_state: nih_plug_egui::EguiState::from_size(1000, 600),
 
             osc_type: IntParam::new("Oscillator", 0, IntRange::Linear { min: 0, max: 3 })
                 .with_value_to_string(Arc::new(|v| {
@@ -405,3 +403,218 @@ impl Vst3Plugin for SimpleSynth {
 
 nih_export_clap!(SimpleSynth);
 nih_export_vst3!(SimpleSynth);
+
+#[cfg(test)]
+mod tests {
+    use super::{NoteQueue, VisBuffer, VIS_BUFFER_SIZE, NOTE_QUEUE_SIZE};
+
+    // --- VisBuffer tests ---
+
+    #[test]
+    fn test_vis_buffer_new_reads_zeros() {
+        let vb = VisBuffer::new();
+        let front = vb.read_front();
+        assert!(front.iter().all(|&s| s == 0.0));
+    }
+
+    #[test]
+    fn test_vis_buffer_push_full_swaps_to_front() {
+        let vb = VisBuffer::new();
+        for _ in 0..VIS_BUFFER_SIZE {
+            vb.push(1.0);
+        }
+        let front = vb.read_front();
+        assert!(front.iter().all(|&s| s == 1.0));
+    }
+
+    #[test]
+    fn test_vis_buffer_partial_push_no_swap() {
+        let vb = VisBuffer::new();
+        for _ in 0..1000 {
+            vb.push(1.0);
+        }
+        let front = vb.read_front();
+        assert!(
+            front.iter().all(|&s| s == 0.0),
+            "partial push should not swap"
+        );
+    }
+
+    #[test]
+    fn test_vis_buffer_multiple_full_cycles() {
+        let vb = VisBuffer::new();
+        // First cycle: fill with 1.0
+        for _ in 0..VIS_BUFFER_SIZE {
+            vb.push(1.0);
+        }
+        // Second cycle: fill with 2.0
+        for _ in 0..VIS_BUFFER_SIZE {
+            vb.push(2.0);
+        }
+        let front = vb.read_front();
+        assert!(
+            front.iter().all(|&s| s == 2.0),
+            "second cycle should overwrite"
+        );
+    }
+
+    #[test]
+    fn test_vis_buffer_values_are_correct_sequence() {
+        let vb = VisBuffer::new();
+        for i in 0..VIS_BUFFER_SIZE {
+            vb.push(i as f32);
+        }
+        let front = vb.read_front();
+        for i in 0..VIS_BUFFER_SIZE {
+            assert_eq!(
+                front[i], i as f32,
+                "sample {} mismatch: expected {}, got {}",
+                i, i, front[i]
+            );
+        }
+    }
+
+    // --- NoteQueue tests ---
+
+    #[test]
+    fn test_note_queue_push_on_and_drain() {
+        let q = NoteQueue::new();
+        assert!(q.push_note_on(60));
+        let mut events = Vec::new();
+        q.drain(|is_on, note| events.push((is_on, note)));
+        assert_eq!(events, vec![(true, 60)]);
+    }
+
+    #[test]
+    fn test_note_queue_push_off_and_drain() {
+        let q = NoteQueue::new();
+        assert!(q.push_note_off(60));
+        let mut events = Vec::new();
+        q.drain(|is_on, note| events.push((is_on, note)));
+        assert_eq!(events, vec![(false, 60)]);
+    }
+
+    #[test]
+    fn test_note_queue_multiple_events_in_order() {
+        let q = NoteQueue::new();
+        q.push_note_on(60);
+        q.push_note_on(64);
+        q.push_note_off(60);
+        q.push_note_on(67);
+        let mut events = Vec::new();
+        q.drain(|is_on, note| events.push((is_on, note)));
+        assert_eq!(
+            events,
+            vec![(true, 60), (true, 64), (false, 60), (true, 67)]
+        );
+    }
+
+    #[test]
+    fn test_note_queue_full_returns_false() {
+        let q = NoteQueue::new();
+        // Usable capacity is NOTE_QUEUE_SIZE - 1 = 63
+        for i in 0..(NOTE_QUEUE_SIZE - 1) {
+            assert!(
+                q.push_note_on(i as u8 % 128),
+                "push {} should succeed",
+                i
+            );
+        }
+        assert!(
+            !q.push_note_on(0),
+            "push should fail when queue is full"
+        );
+    }
+
+    #[test]
+    fn test_note_queue_empty_drain_no_callback() {
+        let q = NoteQueue::new();
+        let mut called = false;
+        q.drain(|_, _| called = true);
+        assert!(!called, "empty drain should not invoke callback");
+    }
+
+    #[test]
+    fn test_note_queue_drain_empties_queue() {
+        let q = NoteQueue::new();
+        for i in 0..5 {
+            q.push_note_on(60 + i);
+        }
+        let mut count1 = 0;
+        q.drain(|_, _| count1 += 1);
+        assert_eq!(count1, 5);
+
+        // Queue should be empty now, push more
+        for i in 0..5 {
+            q.push_note_on(70 + i);
+        }
+        let mut events = Vec::new();
+        q.drain(|is_on, note| events.push((is_on, note)));
+        assert_eq!(events.len(), 5);
+        assert_eq!(events[0], (true, 70));
+    }
+
+    #[test]
+    fn test_note_on_encoding_sets_high_bit() {
+        let q = NoteQueue::new();
+        q.push_note_on(60);
+        let mut events = Vec::new();
+        q.drain(|is_on, note| events.push((is_on, note)));
+        assert_eq!(events[0], (true, 60));
+    }
+
+    #[test]
+    fn test_note_off_encoding_clears_high_bit() {
+        let q = NoteQueue::new();
+        q.push_note_off(60);
+        let mut events = Vec::new();
+        q.drain(|is_on, note| events.push((is_on, note)));
+        assert_eq!(events[0], (false, 60));
+    }
+
+    #[test]
+    fn test_note_queue_wraps_around() {
+        let q = NoteQueue::new();
+        // Push 50, drain all
+        for i in 0..50 {
+            q.push_note_on(i as u8);
+        }
+        let mut count = 0;
+        q.drain(|_, _| count += 1);
+        assert_eq!(count, 50);
+
+        // Push 30 more (these wrap around the 64-slot ring)
+        for i in 0..30 {
+            assert!(q.push_note_on(80 + i as u8), "wrap push {} failed", i);
+        }
+        let mut events = Vec::new();
+        q.drain(|is_on, note| events.push((is_on, note)));
+        assert_eq!(events.len(), 30);
+        for (i, &(is_on, note)) in events.iter().enumerate() {
+            assert!(is_on);
+            assert_eq!(note, 80 + i as u8);
+        }
+    }
+
+    #[test]
+    fn test_note_queue_high_note_values() {
+        let q = NoteQueue::new();
+        // Note 127: push_note_on stores 0x80 | 127 = 0xFF (same as empty sentinel)
+        // but drain relies on head/tail comparison, not slot values
+        q.push_note_on(127);
+        let mut events = Vec::new();
+        q.drain(|is_on, note| events.push((is_on, note)));
+        assert_eq!(events, vec![(true, 127)]);
+
+        q.push_note_off(127);
+        let mut events = Vec::new();
+        q.drain(|is_on, note| events.push((is_on, note)));
+        assert_eq!(events, vec![(false, 127)]);
+
+        // Note 0
+        q.push_note_on(0);
+        let mut events = Vec::new();
+        q.drain(|is_on, note| events.push((is_on, note)));
+        assert_eq!(events, vec![(true, 0)]);
+    }
+}

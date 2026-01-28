@@ -15,23 +15,40 @@ A monophonic synthesizer built in Rust, targeting both native DAW plugins (VST3/
 ```
 vst-rust-wasm/
 ├── dsp-core/       # Pure Rust DSP engine (no dependencies, WASM-safe)
+├── synth-ui/       # Shared egui widgets (keyboard, visualizer, layout)
 ├── plugin/         # nih-plug VST3/CLAP wrapper + egui GUI
+├── web/            # eframe web app (egui rendered to <canvas>)
+├── web-worklet/    # AudioWorklet WASM module (runs dsp-core in browser)
 └── xtask/          # Plugin bundler
 ```
 
 `dsp-core` contains the audio engine with zero external dependencies. It compiles to
 both native and `wasm32-unknown-unknown`, making it the shared core for the native
-plugin and a future web app.
+plugin and the web app.
+
+`synth-ui` contains shared egui widgets (piano keyboard, visualizer, parameter layout)
+with a `ControlRenderer` trait that abstracts parameter rendering. The native plugin
+implements it with nih-plug's `ParamSlider`, while the web app uses plain egui sliders.
 
 `plugin` wraps `dsp-core` with [nih-plug](https://github.com/robbert-vdh/nih-plug) for
 DAW integration and [egui](https://github.com/emilk/egui) for the GUI.
 
+`web` is an [eframe](https://github.com/emilk/egui/tree/master/crates/eframe) web
+application that renders the same egui UI to an HTML `<canvas>` element.
+
+`web-worklet` compiles `dsp-core` to a small WASM module that runs inside a Web Audio
+`AudioWorkletProcessor` for real-time audio in the browser.
+
 ## Prerequisites
 
 - [Rust](https://rustup.rs/) (1.80+)
-- WASM target (for verifying cross-compilation):
+- WASM target:
   ```
   rustup target add wasm32-unknown-unknown
+  ```
+- For the web app: [trunk](https://trunkrs.dev/) and [wasm-pack](https://rustwasm.github.io/wasm-pack/):
+  ```
+  cargo install trunk wasm-pack
   ```
 
 ### What is `wasm32-unknown-unknown`?
@@ -78,6 +95,18 @@ Output files:
 ```
 cargo build -p dsp-core
 ```
+
+### Web app
+
+Build the AudioWorklet WASM module, then build and serve the web app:
+
+```
+wasm-pack build web-worklet --target no-modules --out-dir ../target/web-dist/worklet-pkg
+cd web
+trunk serve --port 8080
+```
+
+Open `http://127.0.0.1:8080/` in your browser and click **Start Audio**.
 
 ### Verify WASM compilation
 

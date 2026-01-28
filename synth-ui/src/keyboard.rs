@@ -1,5 +1,9 @@
-use crate::editor::KeyboardEvent;
-use nih_plug_egui::egui;
+use egui;
+
+pub enum KeyboardEvent {
+    NoteOn(u8),
+    NoteOff(u8),
+}
 
 /// MIDI note numbers for 2 octaves starting at C3 (MIDI 48).
 const FIRST_NOTE: u8 = 48; // C3
