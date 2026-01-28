@@ -125,3 +125,173 @@ impl<'a> ControlRenderer for WebControls<'a> {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // --- DirtyFlags ---
+
+    #[test]
+    fn dirty_flags_default_all_false() {
+        let flags = DirtyFlags::default();
+        assert!(!flags.osc_type);
+        assert!(!flags.gain);
+        assert!(!flags.attack);
+        assert!(!flags.decay);
+        assert!(!flags.sustain);
+        assert!(!flags.release);
+    }
+
+    #[test]
+    fn dirty_flags_any_false_when_all_clear() {
+        let flags = DirtyFlags::default();
+        assert!(!flags.any());
+    }
+
+    #[test]
+    fn dirty_flags_any_true_when_osc_type_set() {
+        let mut flags = DirtyFlags::default();
+        flags.osc_type = true;
+        assert!(flags.any());
+    }
+
+    #[test]
+    fn dirty_flags_any_true_when_gain_set() {
+        let mut flags = DirtyFlags::default();
+        flags.gain = true;
+        assert!(flags.any());
+    }
+
+    #[test]
+    fn dirty_flags_any_true_when_attack_set() {
+        let mut flags = DirtyFlags::default();
+        flags.attack = true;
+        assert!(flags.any());
+    }
+
+    #[test]
+    fn dirty_flags_any_true_when_decay_set() {
+        let mut flags = DirtyFlags::default();
+        flags.decay = true;
+        assert!(flags.any());
+    }
+
+    #[test]
+    fn dirty_flags_any_true_when_sustain_set() {
+        let mut flags = DirtyFlags::default();
+        flags.sustain = true;
+        assert!(flags.any());
+    }
+
+    #[test]
+    fn dirty_flags_any_true_when_release_set() {
+        let mut flags = DirtyFlags::default();
+        flags.release = true;
+        assert!(flags.any());
+    }
+
+    #[test]
+    fn dirty_flags_any_true_when_all_set() {
+        let flags = DirtyFlags {
+            osc_type: true,
+            gain: true,
+            attack: true,
+            decay: true,
+            sustain: true,
+            release: true,
+        };
+        assert!(flags.any());
+    }
+
+    #[test]
+    fn dirty_flags_clear_resets_all() {
+        let mut flags = DirtyFlags {
+            osc_type: true,
+            gain: true,
+            attack: true,
+            decay: true,
+            sustain: true,
+            release: true,
+        };
+        flags.clear();
+        assert!(!flags.osc_type);
+        assert!(!flags.gain);
+        assert!(!flags.attack);
+        assert!(!flags.decay);
+        assert!(!flags.sustain);
+        assert!(!flags.release);
+        assert!(!flags.any());
+    }
+
+    #[test]
+    fn dirty_flags_clear_partial() {
+        let mut flags = DirtyFlags::default();
+        flags.gain = true;
+        flags.release = true;
+        assert!(flags.any());
+        flags.clear();
+        assert!(!flags.any());
+    }
+
+    // --- WebParams ---
+
+    #[test]
+    fn web_params_default_osc_type() {
+        let p = WebParams::default();
+        assert_eq!(p.osc_type, 0, "default osc type should be Sine (0)");
+    }
+
+    #[test]
+    fn web_params_default_gain() {
+        let p = WebParams::default();
+        assert!((p.gain - 0.8).abs() < f32::EPSILON);
+    }
+
+    #[test]
+    fn web_params_default_attack() {
+        let p = WebParams::default();
+        assert!((p.attack - 0.01).abs() < f32::EPSILON);
+    }
+
+    #[test]
+    fn web_params_default_decay() {
+        let p = WebParams::default();
+        assert!((p.decay - 0.1).abs() < f32::EPSILON);
+    }
+
+    #[test]
+    fn web_params_default_sustain() {
+        let p = WebParams::default();
+        assert!((p.sustain - 0.7).abs() < f32::EPSILON);
+    }
+
+    #[test]
+    fn web_params_default_release() {
+        let p = WebParams::default();
+        assert!((p.release - 0.3).abs() < f32::EPSILON);
+    }
+
+    #[test]
+    fn web_params_default_dirty_flags_clear() {
+        let p = WebParams::default();
+        assert!(!p.dirty.any());
+    }
+
+    #[test]
+    fn web_params_osc_type_maps_to_valid_oscillator() {
+        let p = WebParams::default();
+        let osc = OscillatorType::from_index(p.osc_type as usize);
+        assert_eq!(osc, OscillatorType::Sine);
+    }
+
+    #[test]
+    fn web_params_all_osc_indices_valid() {
+        for i in 0..4 {
+            let mut p = WebParams::default();
+            p.osc_type = i;
+            let osc = OscillatorType::from_index(p.osc_type as usize);
+            assert_eq!(osc, OscillatorType::VARIANTS[i as usize]);
+        }
+    }
+}

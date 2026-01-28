@@ -193,3 +193,116 @@ impl<'a> VisualizerWidget<'a> {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // --- VisMode ---
+
+    #[test]
+    fn vis_mode_equality() {
+        assert_eq!(VisMode::Oscilloscope, VisMode::Oscilloscope);
+        assert_eq!(VisMode::Spectrum, VisMode::Spectrum);
+        assert_ne!(VisMode::Oscilloscope, VisMode::Spectrum);
+    }
+
+    #[test]
+    fn vis_mode_clone() {
+        let mode = VisMode::Spectrum;
+        let cloned = mode;
+        assert_eq!(mode, cloned);
+    }
+
+    #[test]
+    fn vis_mode_debug_format() {
+        assert_eq!(format!("{:?}", VisMode::Oscilloscope), "Oscilloscope");
+        assert_eq!(format!("{:?}", VisMode::Spectrum), "Spectrum");
+    }
+
+    // --- FftResources ---
+
+    #[test]
+    fn fft_resources_new_creates_valid_state() {
+        let res = FftResources::new();
+        assert_eq!(res.buffer.len(), FFT_SIZE);
+        assert_eq!(res.magnitudes.len(), FFT_SIZE / 2);
+        assert_eq!(res.mag_db.len(), FFT_SIZE / 2);
+    }
+
+    #[test]
+    fn fft_size_is_1024() {
+        assert_eq!(FFT_SIZE, 1024);
+    }
+
+    #[test]
+    fn fft_resources_buffer_initialized_to_zero() {
+        let res = FftResources::new();
+        for c in &res.buffer {
+            assert_eq!(c.re, 0.0);
+            assert_eq!(c.im, 0.0);
+        }
+    }
+
+    #[test]
+    fn fft_resources_magnitudes_initialized_to_zero() {
+        let res = FftResources::new();
+        for &m in &res.magnitudes {
+            assert_eq!(m, 0.0);
+        }
+    }
+
+    #[test]
+    fn fft_resources_mag_db_initialized_to_zero() {
+        let res = FftResources::new();
+        for &d in &res.mag_db {
+            assert_eq!(d, 0.0);
+        }
+    }
+
+    #[test]
+    fn fft_resources_fft_plan_works() {
+        // Verify the FFT plan can actually process data without panicking
+        let mut res = FftResources::new();
+        // Fill with a simple sine wave
+        for i in 0..FFT_SIZE {
+            let t = i as f32 / FFT_SIZE as f32;
+            res.buffer[i] = Complex::new((2.0 * std::f32::consts::PI * t * 10.0).sin(), 0.0);
+        }
+        res.fft.process(&mut res.buffer);
+        // After FFT, the buffer should have non-zero values (energy at bin 10)
+        let magnitude_at_bin_10 = res.buffer[10].norm();
+        assert!(
+            magnitude_at_bin_10 > 1.0,
+            "expected significant energy at bin 10, got {}",
+            magnitude_at_bin_10
+        );
+    }
+
+    #[test]
+    fn fft_resources_dc_component_for_constant_signal() {
+        let mut res = FftResources::new();
+        // Constant signal of 1.0 should put all energy in bin 0 (DC)
+        for i in 0..FFT_SIZE {
+            res.buffer[i] = Complex::new(1.0, 0.0);
+        }
+        res.fft.process(&mut res.buffer);
+        let dc_magnitude = res.buffer[0].norm();
+        assert!(
+            (dc_magnitude - FFT_SIZE as f32).abs() < 0.1,
+            "DC bin magnitude should be ~{}, got {}",
+            FFT_SIZE,
+            dc_magnitude
+        );
+    }
+
+    #[test]
+    fn fft_resources_silent_signal_produces_zero() {
+        let mut res = FftResources::new();
+        // Buffer is already zeros
+        res.fft.process(&mut res.buffer);
+        for c in &res.buffer {
+            assert!(c.norm() < 1e-10, "expected zero, got {}", c.norm());
+        }
+    }
+}

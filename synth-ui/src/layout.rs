@@ -134,3 +134,49 @@ pub fn render_synth_ui(
     };
     keyboard.paint_and_interact(ui, &kb_response)
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn ui_state_default_vis_mode_is_oscilloscope() {
+        let state = UiState::new();
+        assert_eq!(state.vis_mode, VisMode::Oscilloscope);
+    }
+
+    #[test]
+    fn ui_state_starts_with_no_held_notes() {
+        let state = UiState::new();
+        assert!(state.held_notes.is_empty());
+    }
+
+    #[test]
+    fn ui_state_fft_resources_initialized() {
+        // FftResources::new() allocates the FFT plan and buffers.
+        // Detailed field checks are in visualizer::tests; here we just
+        // verify construction doesn't panic.
+        let _state = UiState::new();
+    }
+
+    #[test]
+    fn ui_state_vis_mode_can_be_changed() {
+        let mut state = UiState::new();
+        state.vis_mode = VisMode::Spectrum;
+        assert_eq!(state.vis_mode, VisMode::Spectrum);
+        state.vis_mode = VisMode::Oscilloscope;
+        assert_eq!(state.vis_mode, VisMode::Oscilloscope);
+    }
+
+    #[test]
+    fn ui_state_held_notes_can_be_modified() {
+        let mut state = UiState::new();
+        state.held_notes.push(60); // C4
+        state.held_notes.push(64); // E4
+        assert_eq!(state.held_notes.len(), 2);
+        assert!(state.held_notes.contains(&60));
+        state.held_notes.retain(|&n| n != 60);
+        assert_eq!(state.held_notes.len(), 1);
+        assert!(!state.held_notes.contains(&60));
+    }
+}

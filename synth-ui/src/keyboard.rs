@@ -181,3 +181,260 @@ impl<'a> PianoKeyboard<'a> {
         keys
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn make_keyboard(held: &[u8]) -> PianoKeyboard<'_> {
+        PianoKeyboard {
+            rect: egui::Rect::from_min_size(egui::pos2(0.0, 0.0), egui::vec2(750.0, 120.0)),
+            held_notes: held,
+        }
+    }
+
+    // --- Constants ---
+
+    #[test]
+    fn first_note_is_c3() {
+        // MIDI note 48 = C3
+        assert_eq!(FIRST_NOTE, 48);
+    }
+
+    #[test]
+    fn num_white_keys_is_15() {
+        // Two octaves of white keys (7 + 7) plus one extra (D5) = 15
+        assert_eq!(NUM_WHITE_KEYS, 15);
+    }
+
+    // --- KEY_MAP validation ---
+
+    #[test]
+    fn key_map_has_15_entries() {
+        assert_eq!(KEY_MAP.len(), 15);
+    }
+
+    #[test]
+    fn key_map_offsets_are_sequential() {
+        // Offsets should go 0..=14 (one per semitone, covering two octaves + 2 semitones)
+        for (i, &(_, offset)) in KEY_MAP.iter().enumerate() {
+            assert_eq!(
+                offset, i as u8,
+                "KEY_MAP entry {} has offset {}, expected {}",
+                i, offset, i
+            );
+        }
+    }
+
+    #[test]
+    fn key_map_has_no_duplicate_keys() {
+        let mut seen = std::collections::HashSet::new();
+        for &(key, _) in KEY_MAP {
+            assert!(
+                seen.insert(key),
+                "Duplicate keyboard key in KEY_MAP: {:?}",
+                key
+            );
+        }
+    }
+
+    #[test]
+    fn key_map_has_no_duplicate_offsets() {
+        let mut seen = std::collections::HashSet::new();
+        for &(_, offset) in KEY_MAP {
+            assert!(
+                seen.insert(offset),
+                "Duplicate offset in KEY_MAP: {}",
+                offset
+            );
+        }
+    }
+
+    #[test]
+    fn key_map_midi_notes_are_valid() {
+        for &(_, offset) in KEY_MAP {
+            let note = FIRST_NOTE + offset;
+            assert!(note <= 127, "MIDI note {} exceeds 127", note);
+        }
+    }
+
+    // --- compute_layout ---
+
+    #[test]
+    fn layout_has_25_keys() {
+        // 2 octaves + 1 = 25 semitones (C3 to C5)
+        let kb = make_keyboard(&[]);
+        let keys = kb.compute_layout();
+        assert_eq!(keys.len(), 25);
+    }
+
+    #[test]
+    fn layout_has_15_white_and_10_black_keys() {
+        let kb = make_keyboard(&[]);
+        let keys = kb.compute_layout();
+        let white_count = keys.iter().filter(|k| !k.is_black).count();
+        let black_count = keys.iter().filter(|k| k.is_black).count();
+        assert_eq!(white_count, 15, "expected 15 white keys");
+        assert_eq!(black_count, 10, "expected 10 black keys");
+    }
+
+    #[test]
+    fn layout_notes_start_at_c3_end_at_c5() {
+        let kb = make_keyboard(&[]);
+        let keys = kb.compute_layout();
+        assert_eq!(keys.first().unwrap().note, 48, "first note should be C3 (MIDI 48)");
+        assert_eq!(keys.last().unwrap().note, 72, "last note should be C5 (MIDI 72)");
+    }
+
+    #[test]
+    fn layout_notes_are_sequential() {
+        let kb = make_keyboard(&[]);
+        let keys = kb.compute_layout();
+        for (i, key) in keys.iter().enumerate() {
+            assert_eq!(key.note, FIRST_NOTE + i as u8);
+        }
+    }
+
+    #[test]
+    fn layout_black_key_detection_matches_music_theory() {
+        // In a chromatic scale, black keys are: C#(1), D#(3), F#(6), G#(8), A#(10)
+        let kb = make_keyboard(&[]);
+        let keys = kb.compute_layout();
+        for key in &keys {
+            let semitone = (key.note - FIRST_NOTE) % 12;
+            let expected_black = matches!(semitone, 1 | 3 | 6 | 8 | 10);
+            assert_eq!(
+                key.is_black, expected_black,
+                "note {} (semitone {}): is_black={}, expected={}",
+                key.note, semitone, key.is_black, expected_black
+            );
+        }
+    }
+
+    #[test]
+    fn layout_white_keys_span_full_width() {
+        let kb = make_keyboard(&[]);
+        let keys = kb.compute_layout();
+        let white_keys: Vec<_> = keys.iter().filter(|k| !k.is_black).collect();
+
+        // First white key starts at left edge
+        let first = white_keys.first().unwrap();
+        assert!((first.rect.left() - 0.0).abs() < 0.01);
+
+        // Last white key ends at right edge
+        let last = white_keys.last().unwrap();
+        assert!(
+            (last.rect.right() - 750.0).abs() < 0.01,
+            "last white key right edge: {}, expected 750.0",
+            last.rect.right()
+        );
+    }
+
+    #[test]
+    fn layout_white_keys_have_equal_width() {
+        let kb = make_keyboard(&[]);
+        let keys = kb.compute_layout();
+        let white_keys: Vec<_> = keys.iter().filter(|k| !k.is_black).collect();
+        let expected_width = 750.0 / NUM_WHITE_KEYS as f32;
+        for (i, wk) in white_keys.iter().enumerate() {
+            assert!(
+                (wk.rect.width() - expected_width).abs() < 0.01,
+                "white key {} width: {}, expected {}",
+                i,
+                wk.rect.width(),
+                expected_width
+            );
+        }
+    }
+
+    #[test]
+    fn layout_white_keys_have_full_height() {
+        let kb = make_keyboard(&[]);
+        let keys = kb.compute_layout();
+        for key in keys.iter().filter(|k| !k.is_black) {
+            assert!(
+                (key.rect.height() - 120.0).abs() < 0.01,
+                "white key height: {}, expected 120.0",
+                key.rect.height()
+            );
+        }
+    }
+
+    #[test]
+    fn layout_black_keys_are_shorter_than_white() {
+        let kb = make_keyboard(&[]);
+        let keys = kb.compute_layout();
+        let black_height = 120.0 * 0.6;
+        for key in keys.iter().filter(|k| k.is_black) {
+            assert!(
+                (key.rect.height() - black_height).abs() < 0.01,
+                "black key height: {}, expected {}",
+                key.rect.height(),
+                black_height
+            );
+        }
+    }
+
+    #[test]
+    fn layout_black_keys_are_narrower_than_white() {
+        let kb = make_keyboard(&[]);
+        let keys = kb.compute_layout();
+        let white_width = 750.0 / NUM_WHITE_KEYS as f32;
+        let black_width = white_width * 0.6;
+        for key in keys.iter().filter(|k| k.is_black) {
+            assert!(
+                (key.rect.width() - black_width).abs() < 0.01,
+                "black key width: {}, expected {}",
+                key.rect.width(),
+                black_width
+            );
+        }
+    }
+
+    #[test]
+    fn layout_no_keys_exceed_keyboard_bounds() {
+        let kb = make_keyboard(&[]);
+        let keys = kb.compute_layout();
+        for key in &keys {
+            assert!(
+                key.rect.top() >= -0.01,
+                "key {} top {} is above keyboard",
+                key.note,
+                key.rect.top()
+            );
+            assert!(
+                key.rect.bottom() <= 120.01,
+                "key {} bottom {} exceeds keyboard height",
+                key.note,
+                key.rect.bottom()
+            );
+        }
+    }
+
+    #[test]
+    fn layout_handles_zero_size_rect() {
+        let kb = PianoKeyboard {
+            rect: egui::Rect::from_min_size(egui::pos2(0.0, 0.0), egui::vec2(0.0, 0.0)),
+            held_notes: &[],
+        };
+        let keys = kb.compute_layout();
+        // Should still produce 25 keys, just with zero-size rects
+        assert_eq!(keys.len(), 25);
+    }
+
+    #[test]
+    fn layout_handles_offset_rect() {
+        let kb = PianoKeyboard {
+            rect: egui::Rect::from_min_size(egui::pos2(100.0, 50.0), egui::vec2(750.0, 120.0)),
+            held_notes: &[],
+        };
+        let keys = kb.compute_layout();
+        // First white key should start at x=100
+        let first_white = keys.iter().find(|k| !k.is_black).unwrap();
+        assert!((first_white.rect.left() - 100.0).abs() < 0.01);
+        // All keys should start at y=50
+        for key in &keys {
+            assert!((key.rect.top() - 50.0).abs() < 0.01);
+        }
+    }
+}
