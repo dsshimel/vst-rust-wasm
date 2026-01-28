@@ -90,6 +90,12 @@ Output files:
 - `target/bundled/plugin.vst3`
 - `target/bundled/plugin.clap`
 
+### Standalone (no DAW needed)
+
+```
+cargo run -p plugin --bin simple-synth-standalone --release
+```
+
 ### DSP core only (for development/testing)
 
 ```
@@ -112,6 +118,12 @@ Open `http://127.0.0.1:8080/` in your browser and click **Start Audio**.
 
 ```
 cargo build -p dsp-core --target wasm32-unknown-unknown
+```
+
+### Running tests
+
+```
+cargo test --workspace
 ```
 
 ## Installation
