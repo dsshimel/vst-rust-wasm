@@ -102,7 +102,7 @@ cargo run -p plugin --bin simple-synth-standalone --release
 cargo build -p dsp-core
 ```
 
-### Web app
+### Web app (development)
 
 Build the AudioWorklet WASM module, then build and serve the web app:
 
@@ -113,6 +113,21 @@ trunk serve --port 8080
 ```
 
 Open `http://127.0.0.1:8080/` in your browser and click **Start Audio**.
+
+### Web app (production)
+
+Build a release version for static hosting:
+
+```
+wasm-pack build web-worklet --target no-modules --out-dir ../target/web-dist/worklet-pkg
+cd web
+trunk build --release
+```
+
+The output in `web/dist/` is a self-contained static site ready to deploy to any
+static host. `web/Trunk.toml` sets `public_url` to control the base path for asset
+URLs — adjust this to match your deployment path (e.g. `/synth/` if hosting at
+`example.com/synth`).
 
 ### Verify WASM compilation
 
