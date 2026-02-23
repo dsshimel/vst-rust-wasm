@@ -76,18 +76,19 @@ The key insight: `dsp-core` needs no OS services. It just processes float buffer
 │  │  ┌───────────┐                  │  │  ┌─────────────┐        │ │
 │  │  │ dsp-core  │  process()       │  │  │  synth-ui   │        │ │
 │  │  │ ::Synth   ├──────────────►   │  │  │  Keyboard   │        │ │
-│  │  └───────────┘  audio buffers   │  │  │  Visualizer │        │ │
-│  │       ▲                         │  │  │  Params     │        │ │
-│  │       │ MIDI NoteOn/Off         │  │  └──────┬──────┘        │ │
-│  │       │                         │  │         │               │ │
-│  │  ┌────┴────────┐                │  │  ┌──────┴──────┐        │ │
-│  │  │ NoteQueue   │◄───────────────┼──┼──│ Keyboard    │        │ │
-│  │  │ (lock-free  │  note events   │  │  │ Events      │        │ │
-│  │  │  ring buf)  │                │  │  └─────────────┘        │ │
-│  │  └─────────────┘                │  │                         │ │
-│  │                                 │  │  ┌─────────────┐        │ │
-│  │  ┌─────────────┐               │  │  │VisBuffer    │        │ │
-│  │  │ VisBuffer   ├───────────────►┼──┼──│(read front) │        │ │
+│  │  └─────┬─────┘  audio buffers   │  │  │  Visualizer ◄──┐    │ │
+│  │        │                        │  │  │  Params     │   │    │ │
+│  │        │ ▲ MIDI NoteOn/Off      │  │  └──────┬──────┘   │    │ │
+│  │        │ │                      │  │         │          │    │ │
+│  │        │ ┌────────────┐         │  │  ┌──────┴──────┐   │    │ │
+│  │        │ │ NoteQueue  │◄────────┼──┼──│ Keyboard    │   │    │ │
+│  │        │ │ (lock-free │         │  │  │ Events      │   │    │ │
+│  │        │ │  ring buf) │         │  │  └─────────────┘   │    │ │
+│  │        │ └────────────┘         │  │                    │    │ │
+│  │        │ samples                │  │  ┌─────────────┐   │    │ │
+│  │        ▼                        │  │  │VisBuffer    │   │    │ │
+│  │  ┌─────────────┐               │  │  │(read front) ├───┘    │ │
+│  │  │ VisBuffer   ├───────────────►┼──┼──│             │        │ │
 │  │  │ (push back) │  vis samples   │  │  └─────────────┘        │ │
 │  │  └─────────────┘                │  │                         │ │
 │  └─────────────────────────────────┘  └─────────────────────────┘ │
@@ -155,6 +156,12 @@ pub trait ControlRenderer {
 
 The native plugin implements this with nih-plug's `ParamSlider`, which automatically integrates with DAW automation, undo/redo, and parameter hosting. The web app implements it with plain egui `Slider` widgets plus a `DirtyFlags` struct that tracks which parameters changed each frame, so only modified values get sent to the audio worklet.
 
+### The Standalone Target
+
+The same `SimpleSynth` struct also runs as a standalone desktop app — no DAW required. In the VST path, the DAW owns the audio thread and hands our plugin an output buffer to fill with samples each callback. nih-plug's `standalone` feature replaces this: [CPAL](https://github.com/RustAudio/cpal) opens an audio device, spawns its own audio thread, and provides the output buffer instead. From `SimpleSynth`'s perspective, `process()` still receives a `&mut Buffer` to fill — it doesn't know or care whether a DAW or CPAL allocated it. The architecture is identical — same two-thread model, same lock-free `VisBuffer` and `NoteQueue`, same egui editor. The only difference is what sits below: CPAL instead of a DAW.
+
+The one complication was device selection. On a machine with a Realtek device configured for 7.1 surround, CPAL reported **8 channels**, but our synth outputs 2 (stereo). nih-plug's CPAL backend requires an exact channel count match, so every configuration was rejected. The fix: enable CPAL's `asio` feature (ASIO drivers typically expose stereo I/O regardless of physical speaker configuration), patch nih-plug to expose ASIO as a backend option, and write a custom launcher in `main.rs` that auto-detects a working device. The launcher tries ASIO first (lower latency, no channel mismatch), scores devices to prefer dedicated hardware over wrappers like ASIO4ALL, and falls back to WASAPI. A `--probe` flag dumps every host, device, and supported config range for debugging audio on unfamiliar machines.
+
 ---
 
 ## The Web Path
@@ -166,55 +173,63 @@ The native plugin implements this with nih-plug's `ParamSlider`, which automatic
 │                                                                   │
 │  ┌──── Main Thread ───────────────────────────────────────────┐   │
 │  │                                                             │   │
-│  │  eframe WebRunner                                          │   │
+│  │  eframe WebRunner (requestAnimationFrame loop)             │   │
+│  │    │ calls update() each frame                              │   │
+│  │    ▼                                                        │   │
 │  │  ┌──────────────────────────────────────┐                  │   │
-│  │  │ SynthWebApp (egui)                   │                  │   │
+│  │  │ SynthWebApp (impl eframe::App)       │                  │   │
 │  │  │  ┌───────────┐  ┌────────────────┐   │                  │   │
 │  │  │  │ synth-ui  │  │ WebControls    │   │                  │   │
 │  │  │  │ Keyboard  │  │ (ControlRend.) │   │                  │   │
 │  │  │  │ Visualizer│  │ DirtyFlags     │   │                  │   │
 │  │  │  └───────────┘  └────────────────┘   │                  │   │
-│  │  └──────────────────────┬───────────────┘                  │   │
-│  │                         │                                   │   │
-│  │  ┌──────────────────────┴───────────────┐                  │   │
+│  │  └──────────┬───────────────────────────┘                  │   │
+│  │             │ notes, params ↓  ↑ vis samples               │   │
+│  │  ┌──────────┴───────────────────────────┐                  │   │
 │  │  │ AudioBridge                          │                  │   │
-│  │  │  AudioContext                        │                  │   │
-│  │  │  AudioWorkletNode ──── MessagePort ──┼───────┐          │   │
-│  │  └──────────────────────────────────────┘       │          │   │
-│  │         ▲                                       │          │   │
-│  │         │ Float32Array vis data                 │          │   │
-│  │         │ (transferable)                        │          │   │
-│  └─────────┼───────────────────────────────────────┼──────────┘   │
-│            │                                       │              │
-│  ┌─────────┼──── AudioWorklet Thread ──────────────┼──────────┐   │
-│  │         │                                       ▼          │   │
-│  │  ┌──────┴───────────────────────────────────────────────┐  │   │
-│  │  │ worklet-processor.js                                 │  │   │
-│  │  │                                                      │  │   │
-│  │  │  WebAssembly.Module (web-worklet crate)              │  │   │
-│  │  │  ┌────────────────────────────────────────────┐      │  │   │
-│  │  │  │ WasmSynth                                  │      │  │   │
-│  │  │  │  ┌─────────┐  ┌───────────┐  ┌─────────┐  │      │  │   │
-│  │  │  │  │dsp-core │  │ vis_buffer│  │audio_buf│  │      │  │   │
-│  │  │  │  │ ::Synth │  │ (2048)    │  │ (128)   │  │      │  │   │
-│  │  │  │  └─────────┘  └───────────┘  └─────────┘  │      │  │   │
-│  │  │  └────────────────────────────────────────────┘      │  │   │
-│  │  │                                                      │  │   │
-│  │  │  process() called every 128 samples (~2.9ms)         │  │   │
-│  │  └──────────────────────────────────────────────────────┘  │   │
+│  │  │  ┌─────────────────────────────────┐ │                  │   │
+│  │  │  │ AudioContext                    │ │                  │   │
+│  │  │  │  AudioWorkletNode              │ │                  │   │
+│  │  │  │         ↓                       │ │                  │   │
+│  │  │  │  context.destination (speakers) │ │                  │   │
+│  │  │  └─────────────────────────────────┘ │                  │   │
+│  │  └───────────────────┬──────────────────┘                  │   │
+│  │                      │ MessagePort (bidirectional)          │   │
+│  │                      │  ↓ init, noteOn/Off, params          │   │
+│  │                      │  ↑ ready, Float32Array vis data      │   │
+│  └──────────────────────┼─────────────────────────────────────┘   │
+│                         │                                         │
+│  ┌──────────────────────┼──── AudioWorklet Thread ────────────┐   │
+│  │                      ▼                                     │   │
+│  │  ┌─────────────────────────────────────────────────────┐   │   │
+│  │  │ worklet-processor.js                                │   │   │
+│  │  │                                                     │   │   │
+│  │  │  WebAssembly.Module (web-worklet crate)             │   │   │
+│  │  │  ┌───────────────────────────────────────────┐      │   │   │
+│  │  │  │ WasmSynth                                 │      │   │   │
+│  │  │  │  ┌─────────┐  ┌───────────┐  ┌─────────┐ │      │   │   │
+│  │  │  │  │dsp-core │  │ vis_buffer│  │audio_buf│ │      │   │   │
+│  │  │  │  │ ::Synth │  │ (2048)    │  │ (128)   │ │      │   │   │
+│  │  │  │  └─────────┘  └───────────┘  └────┬────┘ │      │   │   │
+│  │  │  └───────────────────────────────────┼──────┘      │   │   │
+│  │  │                                      │             │   │   │
+│  │  │  process() called every 128 samples  │ (~2.9ms)    │   │   │
+│  │  │                    ┌─────────────────┘              │   │   │
+│  │  │                    ▼                                │   │   │
+│  │  │  Web Audio output buffer ──► AudioContext graph     │   │   │
+│  │  │  (128 samples written directly, never via port)     │   │   │
+│  │  └─────────────────────────────────────────────────────┘   │   │
 │  └────────────────────────────────────────────────────────────┘   │
-│                                                                   │
-│  Message flow:                                                    │
-│    Main → Worklet: init(wasmBytes), noteOn/Off, param changes     │
-│    Worklet → Main: ready, Float32Array (vis data, transferable)   │
 └───────────────────────────────────────────────────────────────────┘
 ```
 
 The web version has a fundamentally different audio architecture than the native plugin. In a DAW, the host calls your `process()` function on its audio thread. In the browser, you set up a [Web Audio API](https://developer.mozilla.org/en-US/docs/Web/API/Web_Audio_API) graph and the browser calls your `AudioWorkletProcessor.process()` method on a dedicated real-time thread.
 
-The main thread runs the eframe/egui UI (compiled to WASM via [Trunk](https://trunkrs.dev/)), renders to a `<canvas>` element, and communicates with the audio worklet through `MessagePort`. The worklet thread runs a second, separate WASM module (`web-worklet` crate) that wraps `dsp-core::Synth` and processes 128 samples per callback (the Web Audio "render quantum").
+The main thread runs the eframe/egui UI (compiled to WASM via [Trunk](https://trunkrs.dev/)) and renders to a `<canvas>` element. The `AudioBridge` struct manages the Web Audio pipeline: it creates an `AudioContext` (the browser's audio session — equivalent to opening a CPAL device in the standalone path), registers our `worklet-processor.js` script via `audioWorklet.addModule()`, then creates an `AudioWorkletNode` inside that context and connects it to `context.destination()` (the speakers). The `AudioContext` owns the audio graph — the `AudioWorkletNode` is a node within it, wired to the destination output. Creating the node gives us a `MessagePort` — the only communication channel between the main thread and the worklet thread. The bridge then fetches the `web-worklet` WASM bytes, transfers them to the worklet via `postMessage`, and exposes methods like `send_note_on()`, `send_note_off()`, and `send_param()` that post JSON messages through the same port.
 
-Visualization data flows back from the worklet: the `WasmSynth` wrapper accumulates audio samples into a 2048-sample ring buffer, and when it fills, the worklet sends the `Float32Array` back to the main thread via `postMessage` with a [transferable buffer](https://developer.mozilla.org/en-US/docs/Web/API/Web_Workers_API/Transferable_objects) (zero-copy transfer of ownership).
+The worklet thread runs a second, separate WASM module (`web-worklet` crate) that wraps `dsp-core::Synth` and processes 128 samples per callback (the Web Audio "render quantum"). The browser provides an output buffer to `process()` — the same pattern as a DAW providing `&mut Buffer` in the native path. The worklet writes 128 samples directly into that browser-provided buffer, which flows through the audio graph to the speakers. The hot-path audio never crosses the `MessagePort`.
+
+Visualization data does go through the port: the `WasmSynth` wrapper accumulates audio samples into a 2048-sample ring buffer, and when it fills, the worklet sends the `Float32Array` back to the main thread via `postMessage` with a [transferable buffer](https://developer.mozilla.org/en-US/docs/Web/API/Web_Workers_API/Transferable_objects) (zero-copy transfer of ownership). So the `MessagePort` carries only control messages (down) and occasional vis snapshots (up) — the real-time audio stays entirely within the worklet thread.
 
 ---
 
@@ -257,10 +272,10 @@ We tried the obvious fix first: set `vsync: false` to call `wglSwapIntervalEXT(0
 
 **How JUCE handles this:** We researched how [JUCE](https://juce.com/) (the dominant C++ audio plugin framework) solves the same problem. JUCE runs OpenGL rendering on a **dedicated background thread**, not the UI message thread. Even if `SwapBuffers()` blocks, only the render thread stalls — the UI message pump keeps running. This is a more robust solution but requires significant threading infrastructure.
 
-**Our fix:** Instead of overhauling the threading model, we changed the buffering strategy:
+**Our fix:** JUCE's solution works *around* the blocking call — it still calls `SwapBuffers()`, but isolates the damage on a background thread. We took a different approach: instead of containing the block, we eliminated the reason it blocks in the first place. JUCE needs that threading infrastructure anyway as a general-purpose framework, but for us it would have been massive overengineering to work around one call we could simply remove.
 
-1. Requested a **single-buffered** OpenGL pixel format (`double_buffer: false`). This makes all rendering go directly to the visible framebuffer.
-2. Replaced `context.swap_buffers()` with `glow_context.flush()`. With single buffering, `glFlush()` submits all pending GL commands to the GPU without blocking. The DWM compositor picks up the updated content on its next composition pass.
+1. Requested a **single-buffered** OpenGL pixel format (`double_buffer: false`). With no back buffer, there's nothing to swap — the vsync-dependent code path is never entered.
+2. Replaced `context.swap_buffers()` with `glow_context.flush()`. All rendering goes directly to the visible framebuffer, and `glFlush()` submits pending GL commands to the GPU without blocking. The DWM compositor picks up the updated content on its next composition pass.
 
 ```rust
 // BEFORE: blocks indefinitely in VST3 child windows
