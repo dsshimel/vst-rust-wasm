@@ -9,6 +9,8 @@ pub struct UiState {
     pub vis_mode: VisMode,
     pub held_notes: Vec<u8>,
     pub fft_resources: FftResources,
+    pub octave_offset: i8,
+    pub mouse_note: Option<u8>,
 }
 
 impl UiState {
@@ -17,6 +19,8 @@ impl UiState {
             vis_mode: VisMode::Oscilloscope,
             held_notes: Vec::new(),
             fft_resources: FftResources::new(),
+            octave_offset: 0,
+            mouse_note: None,
         }
     }
 }
@@ -41,6 +45,7 @@ pub fn render_synth_ui(
     state: &mut UiState,
     controls: &mut dyn ControlRenderer,
     vis_samples: &[f32],
+    enable_octave_shift: bool,
 ) -> Vec<KeyboardEvent> {
     ui.spacing_mut().item_spacing = egui::vec2(8.0, 6.0);
 
@@ -123,14 +128,37 @@ pub fn render_synth_ui(
     ui.separator();
 
     // --- Bottom section: piano keyboard ---
+    if enable_octave_shift {
+        // Handle Z/X for octave shifting
+        ui.input(|i| {
+            if i.key_pressed(egui::Key::Z) {
+                state.octave_offset = (state.octave_offset - 1).max(-3);
+            }
+            if i.key_pressed(egui::Key::X) {
+                state.octave_offset = (state.octave_offset + 1).min(3);
+            }
+        });
+
+        // Show octave indicator
+        let base_midi = (48i16 + state.octave_offset as i16 * 12).clamp(0, 103) as u8;
+        let octave_num = base_midi / 12;
+        let note_names = ["C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B"];
+        let base_name = note_names[(base_midi % 12) as usize];
+        ui.horizontal(|ui| {
+            ui.label(format!("Octave: {}{} (Z/X to shift)", base_name, octave_num as i8 - 1));
+        });
+    }
+
     let kb_height = ui.available_height().max(80.0);
     let kb_size = egui::vec2(ui.available_width(), kb_height);
     let (kb_rect, kb_response) =
         ui.allocate_exact_size(kb_size, egui::Sense::click_and_drag());
 
-    let keyboard = PianoKeyboard {
+    let mut keyboard = PianoKeyboard {
         rect: kb_rect,
         held_notes: &state.held_notes,
+        octave_offset: state.octave_offset,
+        mouse_note: &mut state.mouse_note,
     };
     keyboard.paint_and_interact(ui, &kb_response)
 }

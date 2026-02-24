@@ -24,8 +24,13 @@ pub fn create(
                     params: &params,
                     setter,
                 };
-                let events =
-                    render_synth_ui(ui, state, &mut controls, samples.as_slice());
+                let events = render_synth_ui(
+                    ui,
+                    state,
+                    &mut controls,
+                    samples.as_slice(),
+                    cfg!(feature = "octave-shift"),
+                );
 
                 // Process keyboard events — update UI state AND send to audio thread
                 for event in events {

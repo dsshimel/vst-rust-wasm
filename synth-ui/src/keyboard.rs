@@ -30,9 +30,21 @@ const KEY_MAP: &[(egui::Key, u8)] = &[
     (egui::Key::L, 14), // D4
 ];
 
+/// Labels for each semitone offset (indexed by offset from KEY_MAP).
+const KEY_LABELS: &[&str] = &[
+    "A", "W", "S", "E", "D", "F", "T", "G", "Y", "H", "U", "J", "K", "O", "L",
+];
+
+fn key_label_for_note(note: u8, first_note: u8) -> Option<&'static str> {
+    let offset = note.checked_sub(first_note)?;
+    KEY_LABELS.get(offset as usize).copied()
+}
+
 pub struct PianoKeyboard<'a> {
     pub rect: egui::Rect,
     pub held_notes: &'a [u8],
+    pub octave_offset: i8,
+    pub mouse_note: &'a mut Option<u8>,
 }
 
 struct KeyLayout {
@@ -43,7 +55,7 @@ struct KeyLayout {
 
 impl<'a> PianoKeyboard<'a> {
     pub fn paint_and_interact(
-        &self,
+        &mut self,
         ui: &egui::Ui,
         response: &egui::Response,
     ) -> Vec<KeyboardEvent> {
@@ -89,7 +101,27 @@ impl<'a> PianoKeyboard<'a> {
             }
         }
 
-        // Handle mouse interaction
+        // Draw keyboard letter labels
+        let white_key_width = self.rect.width() / NUM_WHITE_KEYS as f32;
+        let label_font = egui::FontId::proportional((white_key_width * 0.28).min(14.0));
+        for key in &keys {
+            if let Some(label) = key_label_for_note(key.note, self.effective_first_note()) {
+                let (pos, color) = if key.is_black {
+                    (
+                        egui::pos2(key.rect.center().x, key.rect.bottom() - 4.0),
+                        egui::Color32::from_rgb(200, 200, 200),
+                    )
+                } else {
+                    (
+                        egui::pos2(key.rect.center().x, key.rect.bottom() - 4.0),
+                        egui::Color32::from_rgb(100, 100, 100),
+                    )
+                };
+                painter.text(pos, egui::Align2::CENTER_BOTTOM, label, label_font.clone(), color);
+            }
+        }
+
+        // Handle mouse interaction — track mouse-held note separately
         if response.is_pointer_button_down_on() {
             if let Some(pos) = response.interact_pointer_pos() {
                 // Check black keys first (they overlap white keys visually)
@@ -101,43 +133,53 @@ impl<'a> PianoKeyboard<'a> {
                     }
                 }
                 if let Some(note) = clicked_note {
-                    if !self.held_notes.contains(&note) {
+                    if *self.mouse_note != Some(note) {
+                        // Release old mouse note if switching keys
+                        if let Some(old) = self.mouse_note.take() {
+                            events.push(KeyboardEvent::NoteOff(old));
+                        }
+                        *self.mouse_note = Some(note);
                         events.push(KeyboardEvent::NoteOn(note));
                     }
                 }
             }
-        } else {
-            // Mouse released — release all mouse-held notes
-            // (Computer keyboard notes are handled separately)
-            // We release all held notes here; the editor state tracks them
-            for &note in self.held_notes {
-                events.push(KeyboardEvent::NoteOff(note));
-            }
-        }
-
-        // Handle computer keyboard input
-        let input = ui.input(|i| {
-            let mut pressed = Vec::new();
-            let mut released = Vec::new();
-            for &(key, offset) in KEY_MAP {
-                if i.key_pressed(key) {
-                    pressed.push(FIRST_NOTE + offset);
-                }
-                if i.key_released(key) {
-                    released.push(FIRST_NOTE + offset);
-                }
-            }
-            (pressed, released)
-        });
-
-        for note in input.0 {
-            events.push(KeyboardEvent::NoteOn(note));
-        }
-        for note in input.1 {
+        } else if let Some(note) = self.mouse_note.take() {
+            // Mouse released — only release the mouse-held note
             events.push(KeyboardEvent::NoteOff(note));
         }
 
+        // Handle computer keyboard input using raw events to avoid OS key-repeat
+        let first_note = self.effective_first_note();
+        ui.input(|i| {
+            for event in &i.events {
+                if let egui::Event::Key {
+                    key,
+                    pressed,
+                    repeat,
+                    ..
+                } = event
+                {
+                    if *repeat {
+                        continue;
+                    }
+                    for &(map_key, offset) in KEY_MAP {
+                        if *key == map_key {
+                            if *pressed {
+                                events.push(KeyboardEvent::NoteOn(first_note + offset));
+                            } else {
+                                events.push(KeyboardEvent::NoteOff(first_note + offset));
+                            }
+                        }
+                    }
+                }
+            }
+        });
+
         events
+    }
+
+    fn effective_first_note(&self) -> u8 {
+        (FIRST_NOTE as i16 + self.octave_offset as i16 * 12).clamp(0, 103) as u8
     }
 
     fn compute_layout(&self) -> Vec<KeyLayout> {
@@ -146,10 +188,11 @@ impl<'a> PianoKeyboard<'a> {
         let black_key_width = white_key_width * 0.6;
         let black_key_height = self.rect.height() * 0.6;
 
+        let first_note = self.effective_first_note();
         let mut white_idx = 0u8;
         // Walk through 2 octaves + 1 note = 25 semitones
         for semitone in 0u8..25 {
-            let note = FIRST_NOTE + semitone;
+            let note = first_note + semitone;
             let is_black = matches!(semitone % 12, 1 | 3 | 6 | 8 | 10);
 
             if is_black {
@@ -186,10 +229,12 @@ impl<'a> PianoKeyboard<'a> {
 mod tests {
     use super::*;
 
-    fn make_keyboard(held: &[u8]) -> PianoKeyboard<'_> {
+    fn make_keyboard<'a>(held: &'a [u8], mouse_note: &'a mut Option<u8>) -> PianoKeyboard<'a> {
         PianoKeyboard {
             rect: egui::Rect::from_min_size(egui::pos2(0.0, 0.0), egui::vec2(750.0, 120.0)),
             held_notes: held,
+            octave_offset: 0,
+            mouse_note,
         }
     }
 
@@ -263,14 +308,16 @@ mod tests {
     #[test]
     fn layout_has_25_keys() {
         // 2 octaves + 1 = 25 semitones (C3 to C5)
-        let kb = make_keyboard(&[]);
+        let mut mn = None;
+        let kb = make_keyboard(&[], &mut mn);
         let keys = kb.compute_layout();
         assert_eq!(keys.len(), 25);
     }
 
     #[test]
     fn layout_has_15_white_and_10_black_keys() {
-        let kb = make_keyboard(&[]);
+        let mut mn = None;
+        let kb = make_keyboard(&[], &mut mn);
         let keys = kb.compute_layout();
         let white_count = keys.iter().filter(|k| !k.is_black).count();
         let black_count = keys.iter().filter(|k| k.is_black).count();
@@ -280,7 +327,8 @@ mod tests {
 
     #[test]
     fn layout_notes_start_at_c3_end_at_c5() {
-        let kb = make_keyboard(&[]);
+        let mut mn = None;
+        let kb = make_keyboard(&[], &mut mn);
         let keys = kb.compute_layout();
         assert_eq!(keys.first().unwrap().note, 48, "first note should be C3 (MIDI 48)");
         assert_eq!(keys.last().unwrap().note, 72, "last note should be C5 (MIDI 72)");
@@ -288,7 +336,8 @@ mod tests {
 
     #[test]
     fn layout_notes_are_sequential() {
-        let kb = make_keyboard(&[]);
+        let mut mn = None;
+        let kb = make_keyboard(&[], &mut mn);
         let keys = kb.compute_layout();
         for (i, key) in keys.iter().enumerate() {
             assert_eq!(key.note, FIRST_NOTE + i as u8);
@@ -298,7 +347,8 @@ mod tests {
     #[test]
     fn layout_black_key_detection_matches_music_theory() {
         // In a chromatic scale, black keys are: C#(1), D#(3), F#(6), G#(8), A#(10)
-        let kb = make_keyboard(&[]);
+        let mut mn = None;
+        let kb = make_keyboard(&[], &mut mn);
         let keys = kb.compute_layout();
         for key in &keys {
             let semitone = (key.note - FIRST_NOTE) % 12;
@@ -313,7 +363,8 @@ mod tests {
 
     #[test]
     fn layout_white_keys_span_full_width() {
-        let kb = make_keyboard(&[]);
+        let mut mn = None;
+        let kb = make_keyboard(&[], &mut mn);
         let keys = kb.compute_layout();
         let white_keys: Vec<_> = keys.iter().filter(|k| !k.is_black).collect();
 
@@ -332,7 +383,8 @@ mod tests {
 
     #[test]
     fn layout_white_keys_have_equal_width() {
-        let kb = make_keyboard(&[]);
+        let mut mn = None;
+        let kb = make_keyboard(&[], &mut mn);
         let keys = kb.compute_layout();
         let white_keys: Vec<_> = keys.iter().filter(|k| !k.is_black).collect();
         let expected_width = 750.0 / NUM_WHITE_KEYS as f32;
@@ -349,7 +401,8 @@ mod tests {
 
     #[test]
     fn layout_white_keys_have_full_height() {
-        let kb = make_keyboard(&[]);
+        let mut mn = None;
+        let kb = make_keyboard(&[], &mut mn);
         let keys = kb.compute_layout();
         for key in keys.iter().filter(|k| !k.is_black) {
             assert!(
@@ -362,7 +415,8 @@ mod tests {
 
     #[test]
     fn layout_black_keys_are_shorter_than_white() {
-        let kb = make_keyboard(&[]);
+        let mut mn = None;
+        let kb = make_keyboard(&[], &mut mn);
         let keys = kb.compute_layout();
         let black_height = 120.0 * 0.6;
         for key in keys.iter().filter(|k| k.is_black) {
@@ -377,7 +431,8 @@ mod tests {
 
     #[test]
     fn layout_black_keys_are_narrower_than_white() {
-        let kb = make_keyboard(&[]);
+        let mut mn = None;
+        let kb = make_keyboard(&[], &mut mn);
         let keys = kb.compute_layout();
         let white_width = 750.0 / NUM_WHITE_KEYS as f32;
         let black_width = white_width * 0.6;
@@ -393,7 +448,8 @@ mod tests {
 
     #[test]
     fn layout_no_keys_exceed_keyboard_bounds() {
-        let kb = make_keyboard(&[]);
+        let mut mn = None;
+        let kb = make_keyboard(&[], &mut mn);
         let keys = kb.compute_layout();
         for key in &keys {
             assert!(
@@ -413,9 +469,12 @@ mod tests {
 
     #[test]
     fn layout_handles_zero_size_rect() {
+        let mut mn = None;
         let kb = PianoKeyboard {
             rect: egui::Rect::from_min_size(egui::pos2(0.0, 0.0), egui::vec2(0.0, 0.0)),
             held_notes: &[],
+            octave_offset: 0,
+            mouse_note: &mut mn,
         };
         let keys = kb.compute_layout();
         // Should still produce 25 keys, just with zero-size rects
@@ -424,9 +483,12 @@ mod tests {
 
     #[test]
     fn layout_handles_offset_rect() {
+        let mut mn = None;
         let kb = PianoKeyboard {
             rect: egui::Rect::from_min_size(egui::pos2(100.0, 50.0), egui::vec2(750.0, 120.0)),
             held_notes: &[],
+            octave_offset: 0,
+            mouse_note: &mut mn,
         };
         let keys = kb.compute_layout();
         // First white key should start at x=100

@@ -187,7 +187,7 @@ impl eframe::App for SynthWebApp {
             let mut controls = WebControls {
                 params: &mut self.params,
             };
-            let events = render_synth_ui(ui, &mut self.state, &mut controls, &self.vis_samples);
+            let events = render_synth_ui(ui, &mut self.state, &mut controls, &self.vis_samples, true);
             self.process_keyboard_events(events);
         });
 
